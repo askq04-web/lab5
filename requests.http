@@ -1,0 +1,154 @@
+@base = http://localhost:8080
+
+### 1. Вход (200). Запустить первым.
+POST {{base}}/auth/login
+Content-Type: application/json
+
+{"username":"ivanov","password":"Customer1","deviceId":"idea"}
+
+> {%
+    client.test("Вход", function () { client.assert(response.status === 200); });
+    client.global.set("access", response.body.accessToken);
+    client.global.set("oldAccess", response.body.accessToken);
+    client.global.set("refresh", response.body.refreshToken);
+    client.global.set("oldRefresh", response.body.refreshToken);
+%}
+
+### 2. Защищённый запрос с access (200)
+GET {{base}}/api/samples
+Authorization: Bearer {{access}}
+
+> {% client.test("Access работает", function () { client.assert(response.status === 200); }); %}
+
+### 3. Обновить пару без access (200)
+POST {{base}}/auth/refresh
+Content-Type: application/json
+
+{"refreshToken":"{{refresh}}"}
+
+> {%
+    client.test("Новая пара", function () {
+        client.assert(response.status === 200);
+        client.assert(response.body.accessToken !== client.global.get("oldAccess"));
+        client.assert(response.body.refreshToken !== client.global.get("oldRefresh"));
+    });
+    client.global.set("access", response.body.accessToken);
+    client.global.set("refresh", response.body.refreshToken);
+%}
+
+### 4. Повторно использовать старый refresh (401)
+POST {{base}}/auth/refresh
+Content-Type: application/json
+
+{"refreshToken":"{{oldRefresh}}"}
+
+> {%
+    client.test("Повтор отклонён", function () {
+        client.assert(response.status === 401);
+        client.assert(!response.body.accessToken && !response.body.refreshToken);
+    });
+%}
+
+### 5. Отозванный refresh (401)
+POST {{base}}/auth/refresh
+Content-Type: application/json
+
+{"refreshToken":"{{oldRefresh}}"}
+
+### Новая пара продолжает работать (200)
+GET {{base}}/api/auth/me
+Authorization: Bearer {{access}}
+
+### Refresh вместо access (401)
+GET {{base}}/api/samples
+Authorization: Bearer {{refresh}}
+
+### Access вместо refresh (401)
+POST {{base}}/auth/refresh
+Content-Type: application/json
+
+{"refreshToken":"{{access}}"}
+
+### Неверный refresh (401)
+POST {{base}}/auth/refresh
+Content-Type: application/json
+
+{"refreshToken":"wrong"}
+
+### Нет refresh (400)
+POST {{base}}/auth/refresh
+Content-Type: application/json
+
+{}
+
+### Пустой refresh (400)
+POST {{base}}/auth/refresh
+Content-Type: application/json
+
+{"refreshToken":" "}
+
+### Неверный пароль (401)
+POST {{base}}/auth/login
+Content-Type: application/json
+
+{"username":"ivanov","password":"wrong"}
+
+### Нет пароля (400)
+POST {{base}}/auth/login
+Content-Type: application/json
+
+{"username":"ivanov"}
+
+### Без access (401)
+GET {{base}}/api/samples
+
+### Заказчику нельзя читать пользователей (403)
+GET {{base}}/api/users
+Authorization: Bearer {{access}}
+
+### Слабый пароль (400)
+POST {{base}}/auth/register
+Content-Type: application/json
+
+{"username":"newstudent","password":"12345","name":"Студент"}
+
+### Некорректный логин (400)
+POST {{base}}/auth/register
+Content-Type: application/json
+
+{"username":"а б","password":"Password123","name":"Студент"}
+
+### Занятый логин (409)
+POST {{base}}/auth/register
+Content-Type: application/json
+
+{"username":"ivanov","password":"Password123","name":"Студент"}
+
+### Регистрация (201). Переданная роль ADMIN игнорируется.
+POST {{base}}/auth/register
+Content-Type: application/json
+
+{"username":"student{{$timestamp}}","password":"Password123","name":"Студент","role":"ADMIN","deviceId":"idea"}
+
+> {%
+    client.test("Регистрация", function () { client.assert(response.status === 201); });
+    client.global.set("registeredAccess", response.body.accessToken);
+%}
+
+### Проверить роль CUSTOMER (200)
+GET {{base}}/api/auth/me
+Authorization: Bearer {{registeredAccess}}
+
+> {% client.test("Обычная роль", function () { client.assert(response.body.role === "CUSTOMER"); }); %}
+
+### Вход администратора (200)
+POST {{base}}/auth/login
+Content-Type: application/json
+
+{"username":"admin","password":"Admin1234"}
+
+> {% client.global.set("adminAccess", response.body.accessToken); %}
+
+### Администратор видит пользователей (200)
+GET {{base}}/api/users
+Authorization: Bearer {{adminAccess}}
